@@ -436,3 +436,89 @@ class CombinationKernel(Kern):
     def _check_input_dim(self, X):
         # As combination kernels cannot always know, what their inner kernels have as input dims, the check will be done inside them, respectively
         return
+
+class PosteriorKernel(Kern):
+    """
+    Abstract super class for posterior kernels.
+    A posterior kernel wraps the the posterior covariance function as a kernel.
+    """
+    def __init__(self, kernel, posterior, X_obs, active_dims=None, name="post"):
+        input_dim = kernel.input_dim
+        if active_dims is None:   
+            active_dims = kernel.active_dims
+        super(PosteriorKernel, self).__init__(input_dim, active_dims, name)
+        self.ref_kern = kernel.copy()
+        self.ref_post = posterior
+        self.X_obs = X_obs
+        self.link_parameters(*kernel.copy().parameters)
+        
+        # ndim == 3 is a model for missing data
+        if self.ref_post.woodbury_chol.ndim != 2:
+            raise RuntimeError("This kernel does not support posterior for missing data models")
+
+    def _save_to_input_dict(self):
+        input_dict = super(PosteriorKernel, self)._save_to_input_dict()
+        input_dict['ref'] = {'kern': self.ref_kern.to_dict(), 'X_obs': self.X_obs}
+        return input_dict
+
+    def K(self, X, X2=None):
+        if X2 is None:
+            X2 = X
+        return self.ref_post.covariance_between_points(self.ref_kern, self.X_obs, X, X2)
+    
+    def Kdiag(self, X):
+        # # Using loop for efficiency
+        # return np.array([np.float(self.K(x[np.newaxis, :])) for x in X])
+        return np.diag(self.K(X))
+
+    def gradients_X(self, dL_dK, X, X2=None):
+        # Gradients with prior part 
+        dk_dX = self.ref_kern.gradients_X(dL_dK, X, X2)
+
+        # Gradients with evidence part (note the negative sign)
+        factor = -1
+        if X2 is None:
+            X2 = X
+            factor *= 2 
+
+        alpha = factor * dL_dK @ (self.ref_kern.K(X2, self.X_obs) @ self.ref_post.woodbury_inv)
+        dC_dX = self.ref_kern.gradients_X(alpha, X, self.X_obs)
+        return dk_dX + dC_dX
+
+    def gradients_X_diag(self, dL_dKdiag, X):
+        # TODO: using loop for efficiency
+        return self.gradients_X(np.diag(dL_dKdiag), X)
+
+    def gradients_XX(self, dL_dK, X, X2=None, cov=True):
+        dk2_dXdX2 = self.ref_kern.gradients_XX(dL_dK, X, X2)
+
+        if X2 is None:
+            X2 = X
+
+        dk_dX_with_X_obs = [self.ref_kern.gradients_X(1, X, x[np.newaxis, :]) for x in self.X_obs]       
+        dC_dX_left = np.dstack(dk_dX_with_X_obs) # shape: (l, p, n)
+
+        dk_dX2_with_X_obs = [self.ref_kern.gradients_X(1, X2, x[np.newaxis, :]) for x in self.X_obs]
+        dC_dX2_T_right = np.transpose(np.dstack(dk_dX2_with_X_obs), [0, 2, 1]) # shape: (m, n, p)
+
+        # shape: (l, m, p, p)
+        dC2_dXdX2 = dC_dX_left[:, np.newaxis, :, :] @ self.ref_post.woodbury_inv @ dC_dX2_T_right
+        dC2_dXdX2 *= dL_dK[:, :, np.newaxis, np.newaxis]
+        return dk2_dXdX2 - dC2_dXdX2 
+
+    def gradients_XX_diag(self, dL_dKdiag, X, cov=True):
+        # TODO: using loop for efficiency
+        m = len(X)
+        assert m == X.shape[0]
+        return self.gradients_XX(np.diag(dL_dKdiag), X)[np.arange(m), np.arange(m)]
+
+    def update_gradients_full(self, dL_dK, X, X2):
+        """Set the gradients of all parameters when doing full (N) inference."""
+        pass
+
+
+
+
+
+    
+

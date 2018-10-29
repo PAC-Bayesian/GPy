@@ -11,3 +11,5 @@ from .constant import Constant
 from .identity import Identity
 from .piecewise_linear import PiecewiseLinear
 
+from.kernel import Kernel_with_A
+from .additive import Additive_with_active_dims

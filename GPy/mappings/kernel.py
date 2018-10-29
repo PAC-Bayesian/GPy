@@ -34,7 +34,8 @@ class Kernel(Mapping):
 
     def __init__(self, input_dim, output_dim, Z, kernel, name='kernmap'):
         Mapping.__init__(self, input_dim=input_dim, output_dim=output_dim, name=name)
-        self.kern = kernel
+        ## should use a copy version to avoid name error
+        self.kern = kernel.copy()
         self.Z = Z
         self.num_bases, Zdim = Z.shape
         assert Zdim == self.input_dim
@@ -50,3 +51,10 @@ class Kernel(Mapping):
 
     def gradients_X(self, dL_dF, X):
         return self.kern.gradients_X(np.dot(dL_dF, self.A.T), X, self.Z)
+
+class Kernel_with_A(Kernel):
+    def __init__(self, input_dim, output_dim, Z, kernel, A, name="kernmap_with_A"):
+        super().__init__(input_dim, output_dim, Z, kernel, name)
+        self.unlink_parameter(self.A)
+        self.A = Param('A', A)
+        self.link_parameter(self.A)
